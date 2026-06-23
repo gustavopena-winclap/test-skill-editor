@@ -7,12 +7,12 @@
     {
       "name": "skills-pack",
       "source": "./plugins/skills-pack",
-      "description": "Just a demo to test skill edits"
+      "description": "Demo greet skills to test skill edits"
     },
     {
       "name": "second-plugin-test",
-      "source": "./plugins/seconds-plugin-test",
-      "description": "To plugin test"
+      "source": "./plugins/second-plugin-test",
+      "description": "Demo echo skills to test the marketplace"
     }
   ]
 }

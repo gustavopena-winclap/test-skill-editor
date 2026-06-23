@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skill Editor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar: VS Code-style collapsible tree -->
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <span class="sidebar-title">SKILLS</span>
+        <div class="sidebar-actions">
+          <button id="btn-import" class="icon-btn" title="Import skill (.zip / .skill)" data-icon="upload"></button>
+          <button id="btn-refresh" class="icon-btn" title="Refresh" data-icon="refresh"></button>
+        </div>
+      </div>
+      <nav id="tree" class="tree"></nav>
+      <div class="sidebar-foot">
+        <span id="repo" class="muted"></span>
+      </div>
+    </aside>
+
+    <!-- Editor pane -->
+    <main class="editor-pane">
+      <div class="tabbar">
+        <span id="filepath" class="filepath muted">No file open</span>
+        <div class="tab-actions">
+          <button id="btn-history" class="ghost-btn" data-icon="history"> History</button>
+          <button id="btn-save" class="primary-btn" disabled data-icon="save"> Save</button>
+        </div>
+      </div>
+      <div id="monaco" class="monaco"></div>
+      <div class="statusbar">
+        <input id="message" type="text" placeholder="Commit message…" />
+        <span id="status" class="muted"></span>
+      </div>
+    </main>
+
+    <!-- History drawer -->
+    <aside id="history-panel" class="history-panel hidden">
+      <div class="sidebar-head">
+        <span class="sidebar-title">HISTORY</span>
+        <button id="btn-history-close" class="icon-btn" data-icon="close"></button>
+      </div>
+      <ul id="history" class="history"></ul>
+    </aside>
+  </div>
+
+  <input id="import-file" type="file" accept=".zip,.skill" hidden />
+
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
