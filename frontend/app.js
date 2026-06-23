@@ -184,12 +184,54 @@ function el(tag, cls, html = "") {
 }
 function toggle(set, key) { set.has(key) ? set.delete(key) : set.add(key); }
 
+// ---- modal (app-native; replaces window.prompt / confirm) ----
+function openModal({ title, body, actions = [] }) {
+  const overlay = el("div", "modal-overlay");
+  const modal = el("div", "modal");
+  const head = el("div", "modal-head",
+    `<span class="modal-title">${escapeHtml(title)}</span>`);
+  const closeBtn = el("button", "icon-btn", I.close);
+  head.appendChild(closeBtn);
+  const bodyWrap = el("div", "modal-body");
+  bodyWrap.appendChild(body);
+  const foot = el("div", "modal-foot");
+  const cancel = el("button", "ghost-btn", "Cancel");
+  foot.appendChild(cancel);
+  for (const a of actions) foot.appendChild(a.el);
+  modal.append(head, bodyWrap, foot);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  closeBtn.onclick = close;
+  cancel.onclick = close;
+  return { overlay, modal, close };
+}
+
+// Promise-based confirm dialog matching the app's look.
+function confirmModal({ title, message, confirmLabel = "Confirm", danger = false }) {
+  return new Promise((resolve) => {
+    const body = el("div", "modal-text", escapeHtml(message));
+    const ok = el("button", danger ? "primary-btn danger" : "primary-btn", confirmLabel);
+    const m = openModal({ title, body, actions: [{ el: ok }] });
+    const done = (v) => { m.close(); resolve(v); };
+    ok.onclick = () => done(true);
+    m.overlay.addEventListener("mousedown", (e) => { if (e.target === m.overlay) resolve(false); });
+    document.addEventListener("keydown", function esc(e) {
+      if (e.key === "Escape") { document.removeEventListener("keydown", esc); resolve(false); }
+    });
+  });
+}
+
 // row-action clicks (export / import) — stop the row toggle
 $("tree").addEventListener("click", (e) => {
   const exp = e.target.closest("[data-export]");
   const imp = e.target.closest("[data-import-plugin]");
   if (exp) { e.stopPropagation(); exportSkill(exp.dataset.export); }
-  if (imp) { e.stopPropagation(); startImport(imp.dataset.importPlugin); }
+  if (imp) { e.stopPropagation(); openImportModal(imp.dataset.importPlugin); }
 }, true);
 
 // ---- file ops ----
@@ -249,7 +291,13 @@ $("history").addEventListener("click", async (e) => {
     setStatus(`viewing ${view.slice(0, 7)} — edit & Save to keep`);
   }
   if (restore) {
-    if (!confirm(`Restore to ${restore.slice(0, 7)}? Creates a new commit.`)) return;
+    const ok = await confirmModal({
+      title: "Restore file",
+      message: `Restore to ${restore.slice(0, 7)}? This creates a new commit on top.`,
+      confirmLabel: "Restore",
+      danger: true,
+    });
+    if (!ok) return;
     setStatus("restoring…");
     try {
       const res = await api("/api/restore", {
@@ -267,35 +315,118 @@ function exportSkill(key) {
   const [plugin, skill] = key.split("/");
   window.location.href = `/api/export?plugin=${encodeURIComponent(plugin)}&skill=${encodeURIComponent(skill)}&format=skill`;
 }
-let importTargetPlugin = null;
-function startImport(plugin) {
-  importTargetPlugin = plugin;
-  $("import-file").click();
-}
-$("import-file").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  // Pick the plugin only — the skill name comes from the zip's top folder.
-  let plugin = importTargetPlugin;
-  if (!plugin) {
-    const names = pluginGroups().map((g) => g[0]);
-    plugin = prompt(`Import into which plugin?\n(${names.join(", ")})`, names[0] || "");
-  }
-  if (!plugin) { e.target.value = ""; return; }
+
+// POST the chosen archive; refresh tree and reveal the new skill.
+async function doImport(plugin, file) {
   setStatus("importing…");
-  try {
-    const fd = new FormData();
-    fd.append("plugin", plugin);
-    fd.append("file", file);
-    const res = await api("/api/import", { method: "POST", body: fd });
-    await refresh();
-    openPlugins.add(res.plugin);
-    openSkills.add(`${res.plugin}/${res.skill}`);
-    renderTree();
-    setStatus(`imported ${res.written.length} file(s) → ${res.plugin}/${res.skill}`);
-  } catch (err) { setStatus(err.message, true); }
-  finally { e.target.value = ""; importTargetPlugin = null; }
-});
+  const fd = new FormData();
+  fd.append("plugin", plugin);
+  fd.append("file", file);
+  const res = await api("/api/import", { method: "POST", body: fd });
+  await refresh();
+  openPlugins.add(res.plugin);
+  openSkills.add(`${res.plugin}/${res.skill}`);
+  renderTree();
+  setStatus(`imported ${res.written.length} file(s) → ${res.plugin}/${res.skill}`);
+}
+
+const ACCEPT_RE = /\.(zip|skill)$/i;
+const fmtSize = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+
+// App-native import dialog (replaces the OS prompt + bare file picker).
+// lockedPlugin set => importing into a known plugin row; null => global button.
+function openImportModal(lockedPlugin) {
+  const plugins = pluginGroups().map((g) => g[0]);
+  let plugin = lockedPlugin || plugins[0] || "";
+  let file = null;
+
+  // -- plugin chooser --
+  let pluginField;
+  if (lockedPlugin) {
+    pluginField = el("div", "field", `
+      <span class="field-label">Plugin</span>
+      <div class="locked-value"><span class="ico">${I.box}</span>${escapeHtml(lockedPlugin)}</div>`);
+  } else {
+    const pills = el("div", "pill-row",
+      plugins.map((p) => `<button type="button" class="pill ${p === plugin ? "selected" : ""}" data-plugin="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join(""));
+    const newInput = el("input", "modal-input");
+    newInput.type = "text";
+    newInput.placeholder = "…or type a new plugin name";
+    pills.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-plugin]");
+      if (!b) return;
+      plugin = b.dataset.plugin;
+      newInput.value = "";
+      pills.querySelectorAll(".pill").forEach((x) => x.classList.toggle("selected", x === b));
+      validate();
+    });
+    newInput.addEventListener("input", () => {
+      if (newInput.value.trim()) {
+        plugin = newInput.value.trim();
+        pills.querySelectorAll(".pill").forEach((x) => x.classList.remove("selected"));
+      } else {
+        plugin = plugins[0] || "";
+        const first = pills.querySelector(".pill");
+        if (first) first.classList.add("selected");
+      }
+      validate();
+    });
+    pluginField = el("div", "field", `<span class="field-label">Plugin</span>`);
+    pluginField.append(pills, newInput);
+  }
+
+  // -- dropzone --
+  const fileInput = el("input", "");
+  fileInput.type = "file";
+  fileInput.accept = ".zip,.skill";
+  fileInput.hidden = true;
+  const dz = el("div", "dropzone", `
+    <span class="dz-icon">${I.upload}</span>
+    <span class="dz-title">Drop a <b>.skill</b> or <b>.zip</b> here</span>
+    <span class="dz-hint">or click to browse</span>`);
+  const setFile = (f) => {
+    if (!f) return;
+    if (!ACCEPT_RE.test(f.name)) { setDzError("Only .skill or .zip files"); return; }
+    file = f;
+    dz.classList.add("has-file");
+    dz.innerHTML = `
+      <span class="dz-icon">${iconForFile(f.name)}</span>
+      <span class="dz-title">${escapeHtml(f.name)}</span>
+      <span class="dz-hint">${fmtSize(f.size)} · click to replace</span>`;
+    validate();
+  };
+  const setDzError = (msg) => { dz.classList.add("dz-err"); dz.querySelector(".dz-hint").textContent = msg; };
+  dz.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
+  ["dragenter", "dragover"].forEach((ev) =>
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("dragover"); }));
+  ["dragleave", "drop"].forEach((ev) =>
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("dragover"); }));
+  dz.addEventListener("drop", (e) => setFile(e.dataTransfer.files[0]));
+  const fileField = el("div", "field", `<span class="field-label">Archive</span>`);
+  fileField.append(dz, fileInput);
+
+  // -- assemble --
+  const body = el("div", "");
+  body.append(pluginField, fileField);
+  const importBtn = el("button", "primary-btn", "Import");
+  const validate = () => { importBtn.disabled = !(plugin && plugin.trim() && file); };
+  validate();
+
+  const m = openModal({ title: "Import skill", body, actions: [{ el: importBtn }] });
+  importBtn.onclick = async () => {
+    importBtn.disabled = true;
+    try {
+      await doImport(plugin.trim(), file);
+      m.close();
+    } catch (err) {
+      setStatus(err.message, true);
+      dz.classList.add("dz-err");
+      dz.querySelector(".dz-hint").textContent = err.message;
+      importBtn.disabled = false;
+    }
+  };
+}
 
 // ---- boot ----
 const fmt = (d) => (d ? new Date(d).toLocaleString() : "");
@@ -316,7 +447,7 @@ async function boot() {
 
 $("btn-refresh").onclick = refresh;
 $("btn-save").onclick = save;
-$("btn-import").onclick = () => startImport(null);
+$("btn-import").onclick = () => openImportModal(null);
 $("btn-history").onclick = () => { $("history-panel").classList.toggle("hidden"); loadHistory(); };
 $("btn-history-close").onclick = () => $("history-panel").classList.add("hidden");
 boot();

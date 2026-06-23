@@ -83,33 +83,49 @@ app.get("/api/export", wrap(async (req, res) => {
   res.send(zip.toBuffer());
 }));
 
-// Import a .zip/.skill into a plugin. The skill name comes from the zip's single
-// top-level folder; the skill must contain a SKILL.md (REFERENCE.md, FORMS.md,
+// Import a .zip/.skill into a plugin. The skill name is derived from wherever the
+// SKILL.md sits inside the archive, so flat zips, single-folder zips and nested
+// zips all work. The skill must contain a SKILL.md (REFERENCE.md, FORMS.md,
 // scripts/* etc. are optional). One commit per file.
+
+// Junk that archivers (esp. macOS Finder "Compress") inject — never import it.
+const isJunk = (name) =>
+  name.split("/").some((p) => p === "__MACOSX" || p === ".DS_Store" || p.startsWith("._"));
+
 app.post("/api/import", upload.single("file"), wrap(async (req, res) => {
   const { plugin } = req.body;
   if (!plugin) return res.status(400).json({ error: "plugin required" });
   if (!req.file) return res.status(400).json({ error: "no file uploaded" });
 
-  const entries = new AdmZip(req.file.buffer).getEntries().filter((e) => !e.isDirectory);
-  if (!entries.length) return res.status(400).json({ error: "empty zip" });
-
-  // Every entry must live under one shared top-level folder = the skill name.
-  const tops = new Set(entries.map((e) => e.entryName.split("/")[0]));
-  const wrapped = tops.size === 1 && entries.every((e) => e.entryName.includes("/"));
-  let skill = req.body.skill;
-  if (!skill) {
-    if (!wrapped)
-      return res.status(400).json({
-        error: "zip must contain a single top-level folder named after the skill",
-      });
-    skill = [...tops][0];
+  let zip;
+  try {
+    zip = new AdmZip(req.file.buffer);
+  } catch {
+    return res.status(400).json({ error: "not a valid .zip / .skill archive" });
   }
+  const entries = zip.getEntries().filter((e) => !e.isDirectory && !isJunk(e.entryName));
+  if (!entries.length) return res.status(400).json({ error: "empty archive" });
+
+  // Locate SKILL.md anywhere; its folder is the skill root regardless of how the
+  // archive wraps it (flat, single-folder, or nested).
+  const skillEntry = entries.find(
+    (e) => e.entryName === "SKILL.md" || e.entryName.endsWith("/SKILL.md")
+  );
+  if (!skillEntry) return res.status(400).json({ error: "archive must contain a SKILL.md" });
+  const prefix = skillEntry.entryName.slice(0, -"SKILL.md".length); // "" | "skill/" | "a/b/"
+
+  // Skill name: explicit field > wrapping folder > uploaded file name.
+  let skill =
+    req.body.skill ||
+    (prefix ? prefix.replace(/\/$/, "").split("/").pop() : path.parse(req.file.originalname || "").name);
+  if (!skill || !skill.trim())
+    return res.status(400).json({ error: "could not determine skill name" });
   skill = skill.trim().replace(/[^A-Za-z0-9._-]/g, "-");
 
-  // Strip the leading "<skill>/" so files land at the skill root.
+  // Keep only files under the skill root; strip the prefix so they land at root.
   const files = entries
-    .map((e) => ({ rel: wrapped ? e.entryName.replace(/^[^/]+\//, "") : e.entryName, entry: e }))
+    .filter((e) => e.entryName.startsWith(prefix))
+    .map((e) => ({ rel: e.entryName.slice(prefix.length), entry: e }))
     .filter((f) => f.rel && !f.rel.includes(".."));
 
   if (!files.some((f) => f.rel === "SKILL.md"))
