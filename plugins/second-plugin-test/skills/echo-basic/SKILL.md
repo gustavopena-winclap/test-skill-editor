@@ -1,6 +1,6 @@
 ---
 name: echo-basic
-description: Echo back the text the user gives. Use to test a md-only skill in the second plugin. Trigger when the user says "echo basic" or asks to test the second plugin's basic skill.
+description: Echo back the text the user gives. Use to test a md-only skill in the second plugin. Trigger when the user says "echo basic" or asks to test the second plugin's basic skill. Just for testing
 ---
 
 # Echo Basic
