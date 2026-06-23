@@ -13,6 +13,8 @@ import {
   getHistory,
   getFileAtCommit,
   restoreFile,
+  pluginOf,
+  bumpPluginVersion,
   config,
 } from "./github.js";
 
@@ -43,7 +45,10 @@ app.get("/api/file", wrap(async (req, res) => {
 
 app.put("/api/file", wrap(async (req, res) => {
   const { path: p, content, message, sha } = req.body;
-  res.json(await saveFile({ path: p, content, message, sha }));
+  const result = await saveFile({ path: p, content, message, sha });
+  const plugin = pluginOf(p);
+  if (plugin) result.version = await bumpPluginVersion(plugin);
+  res.json(result);
 }));
 
 app.get("/api/history", wrap(async (req, res) => {
@@ -56,7 +61,10 @@ app.get("/api/file-at-commit", wrap(async (req, res) => {
 
 app.post("/api/restore", wrap(async (req, res) => {
   const { path: p, commit, message } = req.body;
-  res.json(await restoreFile({ path: p, commitSha: commit, message }));
+  const result = await restoreFile({ path: p, commitSha: commit, message });
+  const plugin = pluginOf(p);
+  if (plugin) result.version = await bumpPluginVersion(plugin);
+  res.json(result);
 }));
 
 // Export a skill as a .zip (the .skill format is just a renamed zip).
@@ -75,27 +83,50 @@ app.get("/api/export", wrap(async (req, res) => {
   res.send(zip.toBuffer());
 }));
 
-// Import a .zip/.skill into plugins/<plugin>/skills/<skill>/ (one commit per file).
+// Import a .zip/.skill into a plugin. The skill name comes from the zip's single
+// top-level folder; the skill must contain a SKILL.md (REFERENCE.md, FORMS.md,
+// scripts/* etc. are optional). One commit per file.
 app.post("/api/import", upload.single("file"), wrap(async (req, res) => {
-  const { plugin, skill } = req.body;
-  if (!plugin || !skill) return res.status(400).json({ error: "plugin and skill required" });
+  const { plugin } = req.body;
+  if (!plugin) return res.status(400).json({ error: "plugin required" });
   if (!req.file) return res.status(400).json({ error: "no file uploaded" });
-  const zip = new AdmZip(req.file.buffer);
+
+  const entries = new AdmZip(req.file.buffer).getEntries().filter((e) => !e.isDirectory);
+  if (!entries.length) return res.status(400).json({ error: "empty zip" });
+
+  // Every entry must live under one shared top-level folder = the skill name.
+  const tops = new Set(entries.map((e) => e.entryName.split("/")[0]));
+  const wrapped = tops.size === 1 && entries.every((e) => e.entryName.includes("/"));
+  let skill = req.body.skill;
+  if (!skill) {
+    if (!wrapped)
+      return res.status(400).json({
+        error: "zip must contain a single top-level folder named after the skill",
+      });
+    skill = [...tops][0];
+  }
+  skill = skill.trim().replace(/[^A-Za-z0-9._-]/g, "-");
+
+  // Strip the leading "<skill>/" so files land at the skill root.
+  const files = entries
+    .map((e) => ({ rel: wrapped ? e.entryName.replace(/^[^/]+\//, "") : e.entryName, entry: e }))
+    .filter((f) => f.rel && !f.rel.includes(".."));
+
+  if (!files.some((f) => f.rel === "SKILL.md"))
+    return res.status(400).json({ error: "skill must contain a SKILL.md at its root" });
+
   const base = `plugins/${plugin}/skills/${skill}`;
   const written = [];
-  for (const entry of zip.getEntries()) {
-    if (entry.isDirectory) continue;
-    // Drop a leading top-level folder (e.g. "skill-name/SKILL.md" -> "SKILL.md").
-    const rel = entry.entryName.replace(/^[^/]+\//, "");
-    if (!rel || rel.includes("..")) continue;
+  for (const f of files) {
     await upsertFile({
-      path: `${base}/${rel}`,
-      content: entry.getData().toString("utf8"),
-      message: `Import ${rel} into ${plugin}/${skill}`,
+      path: `${base}/${f.rel}`,
+      content: f.entry.getData().toString("utf8"),
+      message: `Import ${f.rel} into ${plugin}/${skill}`,
     });
-    written.push(rel);
+    written.push(f.rel);
   }
-  res.json({ plugin, skill, written });
+  const version = await bumpPluginVersion(plugin);
+  res.json({ plugin, skill, written, version });
 }));
 
 const port = process.env.PORT || 3000;

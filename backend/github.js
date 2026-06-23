@@ -124,4 +124,39 @@ export async function restoreFile({ path, commitSha, message }) {
   });
 }
 
+// Plugin name from a skill file path, or null if it isn't one.
+export function pluginOf(path) {
+  const m = path.match(/^plugins\/([^/]+)\/skills\//);
+  return m ? m[1] : null;
+}
+
+// Bump the last segment of the plugin's version (e.g. 1.0 -> 1.1). One commit.
+export async function bumpPluginVersion(plugin) {
+  const path = `plugins/${plugin}/.claude-plugin/plugin.json`;
+  let file;
+  try {
+    file = await getFile(path);
+  } catch {
+    return null; // no plugin.json — nothing to bump
+  }
+  let json;
+  try {
+    json = JSON.parse(file.content);
+  } catch {
+    return null; // malformed — leave it alone
+  }
+  const parts = String(json.version ?? "1.0").split(".");
+  const i = parts.length - 1;
+  const n = parseInt(parts[i], 10);
+  parts[i] = String(Number.isNaN(n) ? 1 : n + 1);
+  json.version = parts.join(".");
+  await saveFile({
+    path,
+    content: JSON.stringify(json, null, 2) + "\n",
+    message: `Bump ${plugin} to v${json.version}`,
+    sha: file.sha,
+  });
+  return json.version;
+}
+
 export const config = { ...base, branch };
