@@ -1,7 +1,6 @@
 ---
 name: winclap-design-skill
-description: >
-  Use this skill to generate well-branded interfaces, decks, and assets for Winclap (the umbrella brand) and its 6 sub-brands — Studio, Media (Paid + Owned), Data, Consulting, Nonprofits. Contains official colors with Pantone values, Reckless + Inter type system, full logo set (light/dark/color variants for every sub-brand), photography library, deck reference patterns (Holistic / Studio / Data / Consulting), UI components, and a faithful recreation of the winclap.com Brand Hub.
+description: Use this skill to generate well-branded interfaces, decks, and assets for Winclap (the umbrella brand) and its 6 sub-brands — Studio, Media (Paid + Owned), Data, Consulting, Nonprofits. Contains official colors with Pantone values, Reckless + Inter type system, full logo set (light/dark/color variants for every sub-brand), photography library, deck reference patterns (Holistic / Studio / Data / Consulting), UI components, and a faithful recreation of the winclap.com Brand Hub.
 ---
 
 # Winclap Design Skill
